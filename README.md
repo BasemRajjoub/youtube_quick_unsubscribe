@@ -5,7 +5,7 @@ A [Violentmonkey](https://violentmonkey.github.io/) userscript that adds a quick
 ## Install
 
 1. Install [Violentmonkey](https://violentmonkey.github.io/) for your browser.
-2. Create a new script in Violentmonkey and paste in the script contents.
+2. Create a new script in Violentmonkey and paste in [`youtube-quick-unsubscribe.user.js`](youtube-quick-unsubscribe.user.js).
 
 ## Features
 
