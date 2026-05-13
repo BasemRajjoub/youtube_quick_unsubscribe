@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         YouTube Quick Unsubscribe
-// @version      6.2.0
+// @version      6.3.0
 // @description  Adds Unsubscribe button to every video card on the subscriptions feed.
 // @match        https://www.youtube.com/*
 // @grant        none
@@ -87,6 +87,59 @@ const BLOCK_CSS = `
   ytd-ad-slot-renderer, .ytd-masthead { display:none!important; }
 `;
 
+// CSP that blocks image/media/font/object fetches in the popup. Scripts are
+// left alone — YouTube's app still has to run for us to detect subscription
+// state. Injected as the first child of <head> as early as possible.
+const BLOCK_CSP = [
+  "img-src 'none'",
+  "media-src 'none'",
+  "font-src 'none'",
+  "object-src 'none'",
+  "manifest-src 'none'",
+].join('; ');
+
+const STRIP_SEL = 'img, video, source, iframe, link[as="image"], link[rel*="icon"]';
+
+// Strips src/srcset/poster/href from anything image-like, including descendants.
+function stripMedia(node) {
+  if (!node || node.nodeType !== 1) return;
+  if (node.matches?.(STRIP_SEL)) {
+    node.removeAttribute('src');
+    node.removeAttribute('srcset');
+    node.removeAttribute('poster');
+    if (node.tagName === 'LINK') node.removeAttribute('href');
+  }
+  node.querySelectorAll?.(STRIP_SEL).forEach(stripMedia);
+}
+
+// Set up the popup so it loads as little as possible: CSP blocks future
+// fetches of img/media/font; the MutationObserver strips src/srcset off
+// anything that slips through; BLOCK_CSS hides what's already painted.
+function harden(popup) {
+  try {
+    const doc = popup.document;
+    if (!doc?.head) return false;
+
+    const csp = doc.createElement('meta');
+    csp.httpEquiv = 'Content-Security-Policy';
+    csp.content = BLOCK_CSP;
+    doc.head.insertBefore(csp, doc.head.firstChild);
+
+    const style = doc.createElement('style');
+    style.textContent = BLOCK_CSS;
+    doc.head.appendChild(style);
+
+    stripMedia(doc.documentElement);
+    new popup.MutationObserver(muts => {
+      for (const m of muts) for (const n of m.addedNodes) stripMedia(n);
+    }).observe(doc.documentElement, { childList: true, subtree: true });
+
+    return true;
+  } catch(e) {
+    return false;
+  }
+}
+
 let _popupSeq = 0;
 async function unsubscribe(channelUrl, name) {
   const t = newToast();
@@ -102,15 +155,10 @@ async function unsubscribe(channelUrl, name) {
     return false;
   }
 
-  await poll(() => {
-    try {
-      if (!popup.document?.head) return false;
-      const s = popup.document.createElement('style');
-      s.textContent = BLOCK_CSS;
-      popup.document.head.appendChild(s);
-      return true;
-    } catch(e) { return false; }
-  }, 5000, 100);
+  // Inject CSP + media-stripping observer as early as possible to keep the
+  // popup from downloading thumbnails, banners, fonts, etc. Poll fast (30ms)
+  // so we get into <head> before most resources are queued.
+  await poll(() => harden(popup), 5000, 30);
 
   t.update(`⏳ ${name}: loading channel…`);
   const SUB_WRAPPER_SEL = 'ytd-subscribe-button-renderer, yt-subscribe-button-view-model';
