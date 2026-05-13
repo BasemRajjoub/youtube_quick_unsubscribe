@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         YouTube Quick Unsubscribe
-// @version      6.3.0
+// @version      6.3.1
 // @description  Adds Unsubscribe button to every video card on the subscriptions feed.
 // @match        https://www.youtube.com/*
 // @grant        none
@@ -87,18 +87,20 @@ const BLOCK_CSS = `
   ytd-ad-slot-renderer, .ytd-masthead { display:none!important; }
 `;
 
-// CSP that blocks image/media/font/object fetches in the popup. Scripts are
-// left alone — YouTube's app still has to run for us to detect subscription
-// state. Injected as the first child of <head> as early as possible.
+// CSP that skips the bandwidth-heavy externals (thumbnails on ytimg.com /
+// ggpht.com, web fonts, videos) but still allows same-origin and inline
+// assets so YouTube's bootstrap, identity flow, and icon sprites work.
+// Scripts/XHR/styles are deliberately left unrestricted — YT's app must run
+// for us to read the subscribe state.
 const BLOCK_CSP = [
-  "img-src 'none'",
+  "img-src 'self' data: blob:",
   "media-src 'none'",
-  "font-src 'none'",
-  "object-src 'none'",
-  "manifest-src 'none'",
+  "font-src 'self' data:",
 ].join('; ');
 
-const STRIP_SEL = 'img, video, source, iframe, link[as="image"], link[rel*="icon"]';
+// Note: iframes are NOT stripped — YT's identity/account iframe is required
+// for the subscribe button to hydrate. Favicons aren't worth stripping.
+const STRIP_SEL = 'img, video, source, link[as="image"]';
 
 // Strips src/srcset/poster/href from anything image-like, including descendants.
 function stripMedia(node) {
@@ -162,12 +164,15 @@ async function unsubscribe(channelUrl, name) {
 
   t.update(`⏳ ${name}: loading channel…`);
   const SUB_WRAPPER_SEL = 'ytd-subscribe-button-renderer, yt-subscribe-button-view-model';
+  // 25s — parallel popups share bandwidth and YT can be slow to hydrate.
+  // Only call popup.stop() once the button (and presumably its handlers) is
+  // in the DOM; stopping earlier can leave the page half-hydrated.
   const loaded = await poll(() => {
     try {
       if (popup.document.querySelector(SUB_WRAPPER_SEL)) { popup.stop(); return true; }
       return false;
     } catch(e) { return false; }
-  }, 12000, 150);
+  }, 25000, 150);
 
   if (!loaded) {
     popup.close();
